@@ -1,0 +1,372 @@
+{
+    "Conditions": {
+        "AdditionalCNAME1Check": {
+            "Fn::Not": [
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "AdditionalCNAME1"
+                        },
+                        "None"
+                    ]
+                }
+            ]
+        },
+        "AdditionalCNAME2Check": {
+            "Fn::Not": [
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "AdditionalCNAME2"
+                        },
+                        "None"
+                    ]
+                }
+            ]
+        }
+    },
+    "Description": "Custom URL Redirect Endpoint that runs at the edge leveraging CloudFront, Lambda, and Dynamo",
+    "Parameters": {
+        "AdditionalCNAME1": {
+            "Default": "None",
+            "Description": "Additional CNAME for CF Distribution",
+            "Type": "String"
+        },
+        "AdditionalCNAME2": {
+            "Default": "None",
+            "Description": "Additional CNAME for CF Distribution",
+            "Type": "String"
+        },
+        "HostedZone": {
+            "Description": "The DNS name of an existing Amazon Route 53 hosted zone",
+            "Type": "String"
+        },
+        "ReadCapacityUnits": {
+            "ConstraintDescription": "should be between 5 and 10000",
+            "Default": "1",
+            "Description": "Provisioned read throughput",
+            "MaxValue": "10000",
+            "MinValue": "1",
+            "Type": "Number"
+        },
+        "WriteCapacityUnits": {
+            "ConstraintDescription": "should be between 5 and 10000",
+            "Default": "1",
+            "Description": "Provisioned write throughput",
+            "MaxValue": "10000",
+            "MinValue": "1",
+            "Type": "Number"
+        }
+    },
+    "Resources": {
+        "AdditionalRedirectRecord1": {
+            "Condition": "AdditionalCNAME1Check",
+            "Properties": {
+                "Comment": "CNAME redirect to CloudFront distribution",
+                "HostedZoneName": {
+                    "Fn::Sub": "${HostedZone}."
+                },
+                "Name": {
+                    "Fn::Sub": "${AdditionalCNAME1}."
+                },
+                "ResourceRecords": [
+                    {
+                        "Fn::GetAtt": [
+                            "RedirectDistribution",
+                            "DomainName"
+                        ]
+                    }
+                ],
+                "TTL": "300",
+                "Type": "CNAME"
+            },
+            "Type": "AWS::Route53::RecordSet"
+        },
+        "AdditionalRedirectRecord2": {
+            "Condition": "AdditionalCNAME2Check",
+            "Properties": {
+                "Comment": "CNAME redirect to CloudFront distribution",
+                "HostedZoneName": {
+                    "Fn::Sub": "${HostedZone}."
+                },
+                "Name": {
+                    "Fn::Sub": "${AdditionalCNAME2}."
+                },
+                "ResourceRecords": [
+                    {
+                        "Fn::GetAtt": [
+                            "RedirectDistribution",
+                            "DomainName"
+                        ]
+                    }
+                ],
+                "TTL": "300",
+                "Type": "CNAME"
+            },
+            "Type": "AWS::Route53::RecordSet"
+        },
+        "EdgeLambdaExecutionRole": {
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "edgelambda.amazonaws.com",
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ],
+                    "Version": "2012-10-17"
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "logs:*"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                },
+                                {
+                                    "Action": [
+                                        "dynamodb:GetItem"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": {
+                                        "Fn::GetAtt": [
+                                            "RedirectLookupTable",
+                                            "Arn"
+                                        ]
+                                    }
+                                }
+                            ],
+                            "Version": "2012-10-17"
+                        },
+                        "PolicyName": "root"
+                    }
+                ]
+            },
+            "Type": "AWS::IAM::Role"
+        },
+        "LinksRedirectRecord": {
+            "Properties": {
+                "Comment": "CNAME redirect to CloudFront distribution",
+                "HostedZoneName": {
+                    "Fn::Sub": "${HostedZone}."
+                },
+                "Name": {
+                    "Fn::Sub": "links.${HostedZone}."
+                },
+                "ResourceRecords": [
+                    {
+                        "Fn::GetAtt": [
+                            "RedirectDistribution",
+                            "DomainName"
+                        ]
+                    }
+                ],
+                "TTL": "300",
+                "Type": "CNAME"
+            },
+            "Type": "AWS::Route53::RecordSet"
+        },
+        "RedirectDistribution": {
+            "Properties": {
+                "DistributionConfig": {
+                    "Aliases": [
+                        {
+                            "Fn::Sub": "*.links.${HostedZone}"
+                        },
+                        {
+                            "Fn::Sub": "links.${HostedZone}"
+                        },
+                        {
+                            "Fn::If": [
+                                "AdditionalCNAME1Check",
+                                {
+                                    "Ref": "AdditionalCNAME1"
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        },
+                        {
+                            "Fn::If": [
+                                "AdditionalCNAME2Check",
+                                {
+                                    "Ref": "AdditionalCNAME2"
+                                },
+                                {
+                                    "Ref": "AWS::NoValue"
+                                }
+                            ]
+                        }
+                    ],
+                    "DefaultCacheBehavior": {
+                        "ForwardedValues": {
+                            "QueryString": "false"
+                        },
+                        "LambdaFunctionAssociations": [
+                            {
+                                "EventType": "viewer-request",
+                                "LambdaFunctionARN": {
+                                    "Ref": "RedirectLookupLambdaVersionc56d8085f1148f31f0bad30ff5812862"
+                                }
+                            }
+                        ],
+                        "TargetOriginId": "Default",
+                        "ViewerProtocolPolicy": "allow-all"
+                    },
+                    "Enabled": "true",
+                    "HttpVersion": "http2",
+                    "Origins": [
+                        {
+                            "CustomOriginConfig": {
+                                "OriginProtocolPolicy": "http-only"
+                            },
+                            "DomainName": "google.com",
+                            "Id": "Default"
+                        }
+                    ]
+                }
+            },
+            "Type": "AWS::CloudFront::Distribution"
+        },
+        "RedirectLookup": {
+            "Properties": {
+                "Code": {
+                    "ZipFile": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "var lookup_table = \"",
+                                {
+                                    "Ref": "RedirectLookupTable"
+                                },
+                                "\";\n",
+                                "'use strict';\n",
+                                "var AWS = require('aws-sdk');\n",
+                                "var dynamodb = new AWS.DynamoDB();\n",
+                                "\n",
+                                "exports.handler = (event, context, callback) => {\n",
+                                "     var regex_exp = /(?:\\/)([A-Za-z0-9]+)/g\n",
+                                "     var params = {\n",
+                                "  Key: {\n",
+                                "   \"domain\": {\n",
+                                "     S: event.Records[0].cf.request.headers.host[0].value\n",
+                                "    },\n",
+                                "   \"path\": {\n",
+                                "     S: regex_exp.exec(event.Records[0].cf.request.uri)[1]\n",
+                                "    }\n",
+                                "  },\n",
+                                "  TableName: lookup_table\n",
+                                " };\n",
+                                " dynamodb.getItem(params, function(err, data) {\n",
+                                "   if (err) console.log(err, err.stack);\n",
+                                "   else     console.log(data);\n",
+                                "   const response = {\n",
+                                "    status: '302',\n",
+                                "    statusDescription: 'Found',\n",
+                                "    headers: {\n",
+                                "        location: [{\n",
+                                "            key: 'Location',\n",
+                                "            value: data.Item.target.S,\n",
+                                "        }],\n",
+                                "    },\n",
+                                "    };\n",
+                                "    console.log(`Redirecting host ${event.Records[0].cf.request.headers.host[0].value} to ${response.headers.location[0].value}`);\n",
+                                "    callback(null, response);\n",
+                                " });\n",
+                                "};"
+                            ]
+                        ]
+                    }
+                },
+                "Handler": "index.handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "EdgeLambdaExecutionRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "nodejs6.10",
+                "Timeout": "5"
+            },
+            "Type": "AWS::Lambda::Function"
+        },
+        "RedirectLookupLambdaVersionc56d8085f1148f31f0bad30ff5812862": {
+            "Properties": {
+                "FunctionName": {
+                    "Ref": "RedirectLookup"
+                }
+            },
+            "Type": "AWS::Lambda::Version"
+        },
+        "RedirectLookupTable": {
+            "Properties": {
+                "AttributeDefinitions": [
+                    {
+                        "AttributeName": "domain",
+                        "AttributeType": "S"
+                    },
+                    {
+                        "AttributeName": "path",
+                        "AttributeType": "S"
+                    }
+                ],
+                "KeySchema": [
+                    {
+                        "AttributeName": "domain",
+                        "KeyType": "HASH"
+                    },
+                    {
+                        "AttributeName": "path",
+                        "KeyType": "RANGE"
+                    }
+                ],
+                "ProvisionedThroughput": {
+                    "ReadCapacityUnits": {
+                        "Ref": "ReadCapacityUnits"
+                    },
+                    "WriteCapacityUnits": {
+                        "Ref": "WriteCapacityUnits"
+                    }
+                }
+            },
+            "Type": "AWS::DynamoDB::Table"
+        },
+        "WildcardLinksRedirectRecord": {
+            "Properties": {
+                "Comment": "Wildcard CNAME redirect to CloudFront distribution",
+                "HostedZoneName": {
+                    "Fn::Sub": "${HostedZone}."
+                },
+                "Name": {
+                    "Fn::Sub": "*.links.${HostedZone}."
+                },
+                "ResourceRecords": [
+                    {
+                        "Fn::GetAtt": [
+                            "RedirectDistribution",
+                            "DomainName"
+                        ]
+                    }
+                ],
+                "TTL": "300",
+                "Type": "CNAME"
+            },
+            "Type": "AWS::Route53::RecordSet"
+        }
+    }
+}
